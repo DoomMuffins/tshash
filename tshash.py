@@ -3,6 +3,7 @@ from bitstring import BitArray, Bits
 from sage.all import GF
 
 _BITS = (Bits('0b0'), Bits('0b1'))
+_SKIP_PRIMITIVITY_CHECK = False
 
 
 def bits_to_polynomial(bits):
@@ -35,12 +36,14 @@ class TSHashParams(object):
         self.initial_value = self._canonize_initial_value(extend_bits_to_width(initial_value, self.width))
 
         assert len(polynomials) == 2, 'Weird amount of polynomials'
-        for poly in polynomials:
-            poly_object = bits_to_polynomial(poly)
-            poly_ring = poly_object.parent()
 
-            actual_poly_object = poly_ring.gen() ** self.width + poly_object
-            assert actual_poly_object.is_primitive(), 'The feedback polynomials must be primitive'
+        if not _SKIP_PRIMITIVITY_CHECK:
+            for poly in polynomials:
+                poly_object = bits_to_polynomial(poly)
+                poly_ring = poly_object.parent()
+
+                actual_poly_object = poly_ring.gen() ** self.width + poly_object
+                assert actual_poly_object.is_primitive(), 'The feedback polynomials must be primitive'
 
         self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials)
 
