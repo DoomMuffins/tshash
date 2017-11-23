@@ -83,7 +83,7 @@ class TSHash(object):
         return new_state
 
 
-def tshash_second_preimage_mitm_impl(tshash_params, state_to_postfix, except_bitstrings=()):
+def mitm(tshash_params, state_to_postfix, except_bitstrings=()):
     # Starting conditions
     state_to_prefix = {tshash_params.initial_value: Bits()}
     advance_forward = True
@@ -134,25 +134,22 @@ def tshash_second_preimage_mitm_impl(tshash_params, state_to_postfix, except_bit
         advance_forward = not advance_forward
 
 
-def tshash_digest_preimage_mitm(tshash_params, digest, except_bitstrings=()):
-    tshash = TSHash(tshash_params)
-    empty = Bits()
-    if empty not in except_bitstrings and digest == tshash.compute(empty):
-        return empty
-
-    state_to_postfix = {digest + possible_truncation: empty for possible_truncation in ('0b01', '0b11')}
-    return tshash_second_preimage_mitm_impl(tshash_params, state_to_postfix, except_bitstrings)
+def mitm_state_preimage(tshash_params, state, except_bitstrings=()):
+    state_to_postfix = {state: Bits()}
+    return mitm(tshash_params, state_to_postfix, except_bitstrings)
 
 
-def tshash_second_preimage_mitm(tshash_params, bitstring):
+def mitm_digest_preimage(tshash_params, digest, except_bitstrings=()):
+    #possible_truncations = ('0b01', '0b11')
+    possible_truncations = ('',)
+    state_to_postfix = {digest + possible_truncation: Bits() for possible_truncation in possible_truncations}
+    return mitm(tshash_params, state_to_postfix, except_bitstrings)
+
+
+def mitm_second_preimage(tshash_params, bitstring):
     tshash = TSHash(tshash_params)
     digest = tshash.compute(bitstring)
-    return tshash_digest_preimage_mitm(tshash_params, digest, except_bitstrings=(bitstring,))
-
-
-def tshash_state_preimage_mitm(tshash_params, state, except_bitstrings=()):
-    state_to_postfix = {state: Bits()}
-    return tshash_second_preimage_mitm_impl(tshash_params, state_to_postfix, except_bitstrings)
+    return mitm_digest_preimage(tshash_params, digest, except_bitstrings=(bitstring,))
 
 
 def get_state_to_preimages(tshash_params, depth=None):
