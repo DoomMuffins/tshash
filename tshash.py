@@ -99,12 +99,13 @@ class TSHash(object):
         return new_state
 
 
-def mitm(tshash_params, state_to_postfix, except_bitstrings=()):
+def mitm(tshash_params, state_to_postfix, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
     # Starting conditions
     state_to_prefix = {tshash_params.initial_value: Bits()}
     advance_forward = True
+    current_length = 0
 
-    while True:
+    while current_length <= max_length:
         # Check whether we have a collision
         for state, postfix in state_to_postfix.iteritems():
             prefix = state_to_prefix.get(state)
@@ -139,8 +140,7 @@ def mitm(tshash_params, state_to_postfix, except_bitstrings=()):
                     new_state >>= new_state.len - new_state.rfind(_BITS[1])[0] - 1
                     new_state = Bits(new_state)
 
-                    if not TSHash.calculate_new_state(tshash_params, new_state, bit[0]) == state:
-                        import pdb; pdb.set_trace()
+                    assert TSHash.calculate_new_state(tshash_params, new_state, bit[0]) == state
 
                     new_state_to_postfix[new_state] = new_postfix
 
@@ -148,24 +148,27 @@ def mitm(tshash_params, state_to_postfix, except_bitstrings=()):
 
         # Alternate between forward and backward
         advance_forward = not advance_forward
+        current_length += 1
+
+    return None
 
 
-def mitm_state_preimage(tshash_params, state, except_bitstrings=()):
+def mitm_state_preimage(tshash_params, state, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
     state_to_postfix = {state: Bits()}
     return mitm(tshash_params, state_to_postfix, except_bitstrings)
 
 
-def mitm_digest_preimage(tshash_params, digest, except_bitstrings=()):
+def mitm_digest_preimage(tshash_params, digest, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
     #possible_truncations = ('0b01', '0b11')
     possible_truncations = ('',)
     state_to_postfix = {digest + possible_truncation: Bits() for possible_truncation in possible_truncations}
     return mitm(tshash_params, state_to_postfix, except_bitstrings)
 
 
-def mitm_second_preimage(tshash_params, bitstring):
+def mitm_second_preimage(tshash_params, bitstring, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
     tshash = TSHash(tshash_params)
     digest = tshash.compute(bitstring)
-    return mitm_digest_preimage(tshash_params, digest, except_bitstrings=(bitstring,))
+    return mitm_digest_preimage(tshash_params, digest, except_bitstrings=(bitstring,) + except_bitstrings)
 
 
 def get_state_to_preimages(tshash_params, depth=None):
