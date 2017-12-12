@@ -4,15 +4,15 @@ from sage.all import GF
 
 _BITS = (Bits('0b0'), Bits('0b1'))
 _SKIP_PRIMITIVITY_CHECK = False
+_MITM_DEFAULT_MAX_LENGTH = 32
+_POLY_RING = GF(2)['x']
 
 
 def bits_to_polynomial(bits):
-    poly_ring = GF(2)['x']
-    gen = poly_ring.gen()
 
-    result = poly_ring.zero()
+    result = _POLY_RING.zero()
     for i, bit in enumerate(reversed(bits)):
-        result += bit * (gen ** i)
+        result += bit * (_POLY_RING.gen() ** i)
     return result
 
 
@@ -23,6 +23,14 @@ def polynomial_to_bits(poly):
 
     coefficients = poly.coefficients(sparse=False)
     return Bits(map(int, reversed(coefficients)))
+
+
+def bits_to_polynomial_modulo(bits):
+    return _POLY_RING.gen()**bits.len + bits_to_polynomial(bits)
+
+
+def polynomial_modulo_to_bits(poly):
+    return polynomial_to_bits(poly - _POLY_RING.gen()**poly.degree())
 
 
 def extend_bits_to_width(bits, width):
@@ -46,6 +54,14 @@ class TSHashParams(object):
                 assert actual_poly_object.is_primitive(), 'The feedback polynomials must be primitive'
 
         self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials)
+
+    def __repr__(self):
+        return '{typename}(width={width}, initial_value={initial_value}, polynomials={polynomials})'.format(
+            typename=type(self).__name__,
+            width=self.width,
+            initial_value=bits_to_polynomial(self.initial_value),
+            polynomials=tuple(bits_to_polynomial_modulo(p) for p in self.polynomials)
+        )
 
     @classmethod
     def _canonize_initial_value(cls, uncanonized_initial_value):
