@@ -1,3 +1,14 @@
+"""
+This package provides a research-oriented pure Python implementation of TS-hash,
+including utility functions and algorithms to examine the properties of particular
+instantiations of TS-hash.
+
+Classes:
+
+TSHashParams -- The parameters (keys) of a particular function from the TS-hash family.
+TSHash -- A stateful object providing a stream-based hash interface.
+"""
+
 import collections
 from bitstring import BitArray, Bits
 from sage.all import GF
@@ -9,7 +20,11 @@ _POLY_RING = GF(2)['x']
 
 
 def bits_to_polynomial(bits):
-
+    """
+    Converts a bitstring to a polynomial over GF(2) (MSB/highest exponent first).
+    :param bits: The bitstring to convert.
+    :return: The polynomial over GF(2) corresponding to the bitstring.
+    """
     result = _POLY_RING.zero()
     for i, bit in enumerate(reversed(bits)):
         result += bit * (_POLY_RING.gen() ** i)
@@ -17,6 +32,11 @@ def bits_to_polynomial(bits):
 
 
 def polynomial_to_bits(poly):
+    """
+    Converts a polynomial over GF(2) to a bitstring (MSB/highest exponent first).
+    :param poly: The polynomial to convert.
+    :return: The bitstring corresponding to the polynomial over GF(2).
+    """
     field = poly.base_ring()
     radix = field.characteristic()
     assert radix == 2, 'Weird radix'
@@ -25,35 +45,48 @@ def polynomial_to_bits(poly):
     return Bits(map(int, reversed(coefficients)))
 
 
-def bits_to_polynomial_modulo(bits):
-    return _POLY_RING.gen()**bits.len + bits_to_polynomial(bits)
-
-
-def polynomial_modulo_to_bits(poly):
-    return polynomial_to_bits(poly - _POLY_RING.gen()**poly.degree())
-
-
 def extend_bits_to_width(bits, width):
     assert bits.len <= width, 'Already wide enough'
     return Bits(width - bits.len) + bits
 
 
+def bits_to_polynomial_modulo(bits):
+    """
+    Converts a bitstring to a TS-hash polynomial modulo, including the unrepresented
+    x^n term (MSB/highest exponent first). Assumes the bitstring's length is equal
+    to the polynomial's degree.
+    :param bits: The bitstring to convert to a TS-hash polynomial modulo.
+    :return: The TS-hash polynomial modulo corresponding to the bitstring.
+    """
+    return _POLY_RING.gen()**bits.len + bits_to_polynomial(bits)
+
+
+def polynomial_modulo_to_bits(poly):
+    """
+    Converts a polynomial modulo to a bitstring.
+    :param poly: The polynomial to convert.
+    :return: The bitstring representation of the polynomial (MSB/highest exponent first).
+    """
+    poly_bits = polynomial_to_bits(poly - _POLY_RING.gen()**poly.degree())
+    return extend_bits_to_width(poly_bits, poly.degree())
+
+
 class TSHashParams(object):
-    def __init__(self, width, initial_value, polynomials):
+    """
+    Encapsulates the keys of a particular function from the TS-hash family.
+    """
+    def __init__(self, width, initial_value, polynomials_bits):
         self.width = width
         self.initial_value = self._canonize_initial_value(extend_bits_to_width(initial_value, self.width))
 
-        assert len(polynomials) == 2, 'Weird amount of polynomials'
+        assert len(polynomials_bits) == 2, 'Weird amount of polynomials'
 
         if not _SKIP_PRIMITIVITY_CHECK:
-            for poly in polynomials:
-                poly_object = bits_to_polynomial(poly)
-                poly_ring = poly_object.parent()
+            for poly_bits in polynomials_bits:
+                poly_modulo = bits_to_polynomial_modulo(poly_bits)
+                assert poly_modulo.is_primitive(), 'The feedback polynomials must be primitive'
 
-                actual_poly_object = poly_ring.gen() ** self.width + poly_object
-                assert actual_poly_object.is_primitive(), 'The feedback polynomials must be primitive'
-
-        self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials)
+        self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials_bits)
 
     def __repr__(self):
         return '{typename}(width={width}, initial_value={initial_value}, polynomials={polynomials})'.format(
@@ -72,45 +105,61 @@ class TSHashParams(object):
 
 
 class TSHash(object):
+    """ Provides a both a streaming and a single-call interface to TS-hash calculations. """
     def __init__(self, tshash_params):
         self._params = tshash_params
         self._state = self._params.initial_value
 
     def update(self, data):
+        """ Feed bits into the hash. """
         for d in data:
             self._state = self.calculate_new_state(self._params, self._state, d)
 
     def digest(self):
+        """ Get the current digest. """
         return self._state
 
     def reset(self):
+        """ Reset the state for a new hash computation. """
         self._state = self._params.initial_value
 
     def compute(self, data):
+        """ Compute the hash of a whole bitstring. """
         self.reset()
         self.update(data)
         return self.digest()
 
     @classmethod
     def calculate_new_state(cls, tshash_params, current_state, bit):
+        """ Calculate the state of TSHash given an intermediate state and the next bit fed into the function. """
         current_polynomial = tshash_params.polynomials[bit]
         shift_amount = 1 + current_state.find(_BITS[1])[0]
         new_state = (current_state << shift_amount) ^ current_polynomial
         return new_state
 
 
-def mitm(tshash_params, state_to_postfix, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
+def mitm(tshash_params, end_states, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
+    """
+    Perform a meet-in-the-middle attack trying to arrive at one of the desired end-states.
+    :param tshash_params: The TSHash parameters.
+    :param end_states: A dictionary of desired end states at which we want to arrive.
+    :param except_bitstrings: Preimages to exclude.
+    :param max_length: Maximum depth of BFS traversal across the graph.
+    :return: A preimage, or None if no preimage was found.
+    """
+
     # Starting conditions
     state_to_prefix = {tshash_params.initial_value: Bits()}
+    state_to_suffix = {end_state: Bits() for end_state in end_states}
     advance_forward = True
     current_length = 0
 
     while current_length <= max_length:
         # Check whether we have a collision
-        for state, postfix in state_to_postfix.iteritems():
+        for state, suffix in state_to_suffix.iteritems():
             prefix = state_to_prefix.get(state)
             if prefix is not None:
-                preimage = prefix + postfix
+                preimage = prefix + suffix
                 if preimage not in except_bitstrings:
                     return preimage
 
@@ -125,11 +174,11 @@ def mitm(tshash_params, state_to_postfix, except_bitstrings=(), max_length=_MITM
             state_to_prefix = new_state_to_prefix
 
         else:
-            # Advance the postfixes
-            new_state_to_postfix = {}
-            for state, postfix in state_to_postfix.iteritems():
+            # Advance the suffixes
+            new_state_to_suffix = {}
+            for state, suffix in state_to_suffix.iteritems():
                 for bit in _BITS:
-                    new_postfix = bit + postfix
+                    new_suffix = bit + suffix
                     polynomial = tshash_params.polynomials[bit[0]]
 
                     # Revert last generator multiplication
@@ -142,9 +191,9 @@ def mitm(tshash_params, state_to_postfix, except_bitstrings=(), max_length=_MITM
 
                     assert TSHash.calculate_new_state(tshash_params, new_state, bit[0]) == state
 
-                    new_state_to_postfix[new_state] = new_postfix
+                    new_state_to_suffix[new_state] = new_suffix
 
-            state_to_postfix = new_state_to_postfix
+            state_to_suffix = new_state_to_suffix
 
         # Alternate between forward and backward
         advance_forward = not advance_forward
@@ -154,24 +203,39 @@ def mitm(tshash_params, state_to_postfix, except_bitstrings=(), max_length=_MITM
 
 
 def mitm_state_preimage(tshash_params, state, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
-    state_to_postfix = {state: Bits()}
-    return mitm(tshash_params, state_to_postfix, except_bitstrings)
+    """ Performs a meet-in-the-middle attack to find a preimage whose hash arrives at a certain state. """
+    return mitm(tshash_params=tshash_params,
+                end_states=(state, ),
+                except_bitstrings=except_bitstrings,
+                max_length=max_length)
 
 
 def mitm_digest_preimage(tshash_params, digest, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
-    #possible_truncations = ('0b01', '0b11')
+    """ Performs a meet-in-the-middle attack to find a preimage whose hash arrives at a certain digest. """
+    # We currently don't discard bits from the state to get a digest
+    # possible_truncations = ('0b01', '0b11')
     possible_truncations = ('',)
-    state_to_postfix = {digest + possible_truncation: Bits() for possible_truncation in possible_truncations}
-    return mitm(tshash_params, state_to_postfix, except_bitstrings)
+    end_states = (digest + possible_truncation for possible_truncation in possible_truncations)
+    return mitm(tshash_params=tshash_params,
+                end_states=end_states,
+                except_bitstrings=except_bitstrings,
+                max_length=max_length)
 
 
 def mitm_second_preimage(tshash_params, bitstring, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
-    tshash = TSHash(tshash_params)
-    digest = tshash.compute(bitstring)
-    return mitm_digest_preimage(tshash_params, digest, except_bitstrings=(bitstring,) + except_bitstrings)
+    """ Performs a meet-in-the-middle attack to find a second preimage to the image of a given bitstring """
+    digest = TSHash(tshash_params).compute(bitstring)
+    return mitm_digest_preimage(tshash_params=tshash_params,
+                                digest=digest,
+                                except_bitstrings=(bitstring,) + except_bitstrings,
+                                max_length=max_length)
 
 
 def get_state_to_preimages(tshash_params, depth=None):
+    """
+    Performs a BFS traversal of the TS-hash graph to yield a dictionary mapping
+    states to all their preimages up to a certain length (depth).
+    """
     depth = depth or tshash_params.width
     state_to_preimages = collections.defaultdict(list)
     bfs = collections.deque()
@@ -196,6 +260,10 @@ def get_state_to_preimages(tshash_params, depth=None):
 
 
 def calculate_trajectory(tshash_params, bitstring):
+    """
+    Calculates the trajectory of states traversed through in the TS-hash graph
+    when performing a walk according to a particular bitstring.
+    """
     tshash = TSHash(tshash_params)
     trajectory = [tshash._state]
     for bit in bitstring:
