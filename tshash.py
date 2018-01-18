@@ -80,13 +80,12 @@ class TSHashParams(object):
         self.initial_value = self._canonize_initial_value(extend_bits_to_width(initial_value, self.width))
 
         assert len(polynomials_bits) == 2, 'Weird amount of polynomials'
+        self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials_bits)
 
         if not _SKIP_PRIMITIVITY_CHECK:
-            for poly_bits in polynomials_bits:
+            for poly_bits in self.polynomials:
                 poly_modulo = bits_to_polynomial_modulo(poly_bits)
                 assert poly_modulo.is_primitive(), 'The feedback polynomials must be primitive'
-
-        self.polynomials = tuple(extend_bits_to_width(poly, self.width) for poly in polynomials_bits)
 
     def __repr__(self):
         return '{typename}(width={width}, initial_value={initial_value}, polynomials={polynomials})'.format(
