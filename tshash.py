@@ -104,7 +104,9 @@ class TSHashParams(object):
 
 
 class TSHash(object):
-    """ Provides a both a streaming and a single-call interface to TS-hash calculations. """
+    """
+    Provides a both a streaming and a single-call interface to TS-hash calculations.
+    """
     def __init__(self, tshash_params):
         self._params = tshash_params
         self._state = self._params.initial_value
