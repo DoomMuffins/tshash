@@ -149,33 +149,38 @@ def mitm(tshash_params, end_states, except_bitstrings=(), max_length=_MITM_DEFAU
     :return: A preimage, or None if no preimage was found.
     """
 
+    empty = Bits()
+    if tshash_params.initial_value in end_states and empty not in except_bitstrings:
+        return empty
+
     # Starting conditions
-    state_to_prefix = {tshash_params.initial_value: Bits()}
-    state_to_suffix = {end_state: Bits() for end_state in end_states}
+    state_to_prefix = {tshash_params.initial_value: empty}
+    state_to_suffix = {end_state: empty for end_state in end_states}
     advance_forward = True
     current_length = 0
 
     while current_length <= max_length:
-        # Check whether we have a collision
-        for state, suffix in state_to_suffix.iteritems():
-            prefix = state_to_prefix.get(state)
-            if prefix is not None:
-                preimage = prefix + suffix
-                if preimage not in except_bitstrings:
-                    return preimage
 
         if advance_forward:
-            # Advance the prefixes
+            # Advance the prefixes (forwards)
             new_state_to_prefix = {}
             for state, prefix in state_to_prefix.iteritems():
                 for bit in _BITS:
                     new_state = TSHash.calculate_new_state(tshash_params, state, bit[0])
                     new_prefix = prefix + bit
                     new_state_to_prefix[new_state] = new_prefix
+
+                    # Check whether we have an intersection
+                    suffix = state_to_suffix.get(new_state)
+                    if suffix is None:
+                        continue
+                    preimage = new_prefix + suffix
+                    if preimage not in except_bitstrings:
+                        return preimage
             state_to_prefix = new_state_to_prefix
 
         else:
-            # Advance the suffixes
+            # Advance the suffixes (backwards)
             new_state_to_suffix = {}
             for state, suffix in state_to_suffix.iteritems():
                 for bit in _BITS:
@@ -189,10 +194,17 @@ def mitm(tshash_params, end_states, except_bitstrings=(), max_length=_MITM_DEFAU
                     new_state[0] = True
                     new_state >>= new_state.len - new_state.rfind(_BITS[1])[0] - 1
                     new_state = Bits(new_state)
-
                     assert TSHash.calculate_new_state(tshash_params, new_state, bit[0]) == state
 
                     new_state_to_suffix[new_state] = new_suffix
+
+                    # Check whether we have an intersection
+                    prefix = state_to_prefix.get(new_state)
+                    if prefix is None:
+                        continue
+                    preimage = prefix + new_suffix
+                    if preimage not in except_bitstrings:
+                        return preimage
 
             state_to_suffix = new_state_to_suffix
 
@@ -216,7 +228,7 @@ def mitm_digest_preimage(tshash_params, digest, except_bitstrings=(), max_length
     # We currently don't discard bits from the state to get a digest
     # possible_truncations = ('0b01', '0b11')
     possible_truncations = ('',)
-    end_states = (digest + possible_truncation for possible_truncation in possible_truncations)
+    end_states = tuple(digest + possible_truncation for possible_truncation in possible_truncations)
     return mitm(tshash_params=tshash_params,
                 end_states=end_states,
                 except_bitstrings=except_bitstrings,
@@ -224,7 +236,7 @@ def mitm_digest_preimage(tshash_params, digest, except_bitstrings=(), max_length
 
 
 def mitm_second_preimage(tshash_params, bitstring, except_bitstrings=(), max_length=_MITM_DEFAULT_MAX_LENGTH):
-    """ Performs a meet-in-the-middle attack to find a second preimage to the image of a given bitstring """
+    """ Performs a meet-in-the-middle attack to find a second preimage to the image of a given bitstring. """
     digest = TSHash(tshash_params).compute(bitstring)
     return mitm_digest_preimage(tshash_params=tshash_params,
                                 digest=digest,
@@ -271,4 +283,3 @@ def calculate_trajectory(tshash_params, bitstring):
         tshash.update([bit])
         trajectory.append(tshash._state)
     return trajectory
-
